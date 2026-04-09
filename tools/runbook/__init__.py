@@ -8,3 +8,5 @@ Run with:
     python -m tools.runbook --resume      # resume from saved state
     python -m tools.runbook --check-hashing  # validate dbt hashing + pepper wiring
 """
+
+__version__ = "0.1.1"
