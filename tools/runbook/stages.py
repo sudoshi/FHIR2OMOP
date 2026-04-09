@@ -16,7 +16,7 @@ import json
 import shlex
 import subprocess
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -254,8 +254,7 @@ def _raw_validators(cfg: RunbookConfig) -> list[BqCheck]:
 
 
 _DBT_HASH_VARS = (
-    "{hash_person_source_value: true, "
-    "person_source_value_pepper: \"{{ env_var('DBT_PEPPER') }}\"}"
+    "{hash_person_source_value: true}"
 )
 
 
@@ -626,18 +625,27 @@ def run_command(
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a") as logf:
-        logf.write(f"\n\n===== {datetime.utcnow().isoformat()}Z :: {cmd.display()} =====\n")
+        now_utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        logf.write(f"\n\n===== {now_utc} :: {cmd.display()} =====\n")
         logf.flush()
 
-        proc = subprocess.Popen(
-            cmd.argv,
-            cwd=str(cwd),
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        )
+        try:
+            proc = subprocess.Popen(
+                cmd.argv,
+                cwd=str(cwd),
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+        except FileNotFoundError:
+            message = f"Command not found: {cmd.argv[0]}\n"
+            sys.stdout.write(message)
+            sys.stdout.flush()
+            logf.write(message)
+            logf.flush()
+            return 127
         assert proc.stdout is not None
         for line in proc.stdout:
             sys.stdout.write(line)
@@ -662,7 +670,8 @@ def run_bq_json(sql: str, *, project: str, log_path: Path) -> list[dict[str, Any
     ]
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a") as logf:
-        logf.write(f"\n\n===== {datetime.utcnow().isoformat()}Z :: bq query =====\n")
+        now_utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        logf.write(f"\n\n===== {now_utc} :: bq query =====\n")
         logf.write(sql + "\n")
     try:
         proc = subprocess.run(

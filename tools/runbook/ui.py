@@ -6,13 +6,11 @@ state. The calling code composes these with config, state, and stages.
 """
 from __future__ import annotations
 
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 import questionary
 from rich.console import Console
-from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.prompt import Confirm
 from rich.rule import Rule
@@ -122,7 +120,7 @@ def render_command_preview(console: Console, cfg: RunbookConfig) -> None:
 def render_dry_run_report(console: Console, cfg: RunbookConfig) -> None:
     console.print()
     console.print(Rule("DRY-RUN PREVIEW", style="yellow"))
-    errors = cfg.validate()
+    errors = cfg.validate(base_dir=Path(__file__).resolve().parents[2])
     if errors:
         console.print(Panel("\n".join(f"• {e}" for e in errors), title="Validation errors", border_style="red"))
     else:
@@ -329,6 +327,85 @@ def ask_on_failure(stage: Stage) -> str:
     ).ask()
 
 
+def ask_connectivity_failure() -> str:
+    """Prompt the user after connectivity checks fail. Returns one of:
+    'proceed' | 'rerun_wizard' | 'abort'."""
+    return questionary.select(
+        "Connectivity checks reported failures. What now?",
+        choices=[
+            questionary.Choice(
+                "Abort (recommended) — fix the issues and re-run", value="abort"
+            ),
+            questionary.Choice(
+                "Re-run the wizard (edit inputs and re-check)", value="rerun_wizard"
+            ),
+            questionary.Choice(
+                "Proceed anyway (you're sure the checks are wrong)", value="proceed"
+            ),
+        ],
+        default="abort",
+    ).ask()
+
+
+# =============================================================================
+# Connectivity rendering
+# =============================================================================
+
+
+_LEVEL_STYLE = {
+    "pass": "[green]PASS[/green]",
+    "warn": "[yellow]WARN[/yellow]",
+    "fail": "[red]FAIL[/red]",
+    "skip": "[dim]skip[/dim]",
+}
+
+
+def render_connectivity_report(console: Console, report) -> None:
+    """Render a ConnectivityReport. Split out from connectivity.py so that
+    module stays free of rich/questionary imports."""
+    console.print()
+    console.print(Rule("CONNECTIVITY CHECKS", style="cyan"))
+
+    table = Table(border_style="cyan", show_lines=False)
+    table.add_column("Check", style="bold")
+    table.add_column("Status", justify="center")
+    table.add_column("Summary")
+
+    for chk, result in report.results:
+        status = _LEVEL_STYLE.get(result.level, result.level)
+        table.add_row(chk.description, status, result.summary)
+
+    console.print(table)
+
+    # Hints (remediation) listed only for warn/fail so pass rows stay clean.
+    hints: list[tuple[str, str, str]] = []
+    for chk, result in report.results:
+        if result.level in ("warn", "fail") and result.hint:
+            hints.append((chk.name, result.level, result.hint))
+    if hints:
+        console.print()
+        console.print("[bold]Remediation hints:[/bold]")
+        for name, level, hint in hints:
+            marker = "[red]✗[/red]" if level == "fail" else "[yellow]![/yellow]"
+            indented = hint.replace("\n", "\n    ")
+            console.print(f"  {marker} [dim]{name}:[/dim] {indented}")
+
+    counts = report.count_by_level()
+    summary_text = (
+        f"pass={counts.get('pass', 0)} "
+        f"warn={counts.get('warn', 0)} "
+        f"fail={counts.get('fail', 0)} "
+        f"skip={counts.get('skip', 0)}"
+    )
+    border = "red" if report.any_failed() else ("yellow" if report.any_warned() else "green")
+    console.print(Panel.fit(summary_text, title="Totals", border_style=border))
+
+
+def render_connectivity_progress(console: Console, check_name: str, description: str) -> None:
+    """Live progress line emitted by the connectivity runner's progress_cb."""
+    console.print(f"  [dim]· running check:[/dim] {description}")
+
+
 # =============================================================================
 # Validator rendering
 # =============================================================================
@@ -366,7 +443,7 @@ def render_exit_report(
     cfg: RunbookConfig,
     completed: list[str],
     failed: list[str],
-    check_results: list[tuple[str, bool, str]],
+    check_results: dict[str, tuple[bool, str]],
 ) -> None:
     console.print()
     console.print(Rule("EXIT CRITERIA", style="cyan"))
@@ -374,12 +451,7 @@ def render_exit_report(
     table.add_column("Criterion")
     table.add_column("Status")
 
-    criteria: list[tuple[str, bool]] = [
-        ("Raw FHIR tables loaded", "raw_validate" in completed),
-        ("dbt parse + build + test succeeded", all(s in completed for s in ("dbt_parse", "dbt_build", "dbt_test"))),
-        ("person and measurement non-zero", any(ok for name, ok, _ in check_results if "person" in name or "final" in name)),
-        ("Unknown-concept rates reviewed", "omop_validate" in completed),
-    ]
+    criteria = exit_criteria_statuses(completed=completed, check_results=check_results)
     for name, ok in criteria:
         table.add_row(name, "[green]PASS[/green]" if ok else "[red]FAIL[/red]")
 
@@ -402,3 +474,25 @@ def render_exit_report(
             border_style="green",
         )
     )
+
+
+def exit_criteria_statuses(
+    *,
+    completed: list[str],
+    check_results: dict[str, tuple[bool, str]],
+) -> list[tuple[str, bool]]:
+    return [
+        ("Raw FHIR tables loaded", check_results.get("raw_tables", (False, ""))[0]),
+        (
+            "dbt parse + build + test succeeded",
+            all(s in completed for s in ("dbt_parse", "dbt_build", "dbt_test")),
+        ),
+        (
+            "person and measurement non-zero",
+            check_results.get("final_person_measurement", (False, ""))[0],
+        ),
+        (
+            "Unknown-concept rates reviewed",
+            all(name in check_results for name in ("measurement_gaps", "observation_gaps")),
+        ),
+    ]

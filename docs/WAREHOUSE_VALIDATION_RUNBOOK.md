@@ -160,7 +160,7 @@ make dbt-parse
 If you need the production hashing behavior on the first real build, pass:
 
 ```bash
-dbt parse --vars '{hash_person_source_value: true, person_source_value_pepper: "..."}'
+DBT_PEPPER='...' dbt parse --vars '{hash_person_source_value: true}'
 ```
 
 Expected:

@@ -2,12 +2,16 @@
 Entry point for the runbook TUI.
 
 Usage:
-    python -m tools.runbook                 # full interactive run
-    python -m tools.runbook --dry-run       # collect inputs, preview commands, exit
-    python -m tools.runbook --resume        # resume from saved state
-    python -m tools.runbook --list-stages   # print the stage list and exit
-    python -m tools.runbook --config PATH   # override config path
-    python -m tools.runbook --state PATH    # override state path
+    python -m tools.runbook                        # full interactive run
+    python -m tools.runbook --dry-run              # collect inputs, preview commands, exit
+    python -m tools.runbook --resume               # resume from saved state
+    python -m tools.runbook --list-stages          # print the stage list and exit
+    python -m tools.runbook --check-hashing        # run dbt deps + parse with hashing enabled, then exit
+    python -m tools.runbook --check-connectivity   # run pre-flight checks only and exit
+    python -m tools.runbook --skip-connectivity    # skip the pre-flight phase on a real run
+    python -m tools.runbook --skip-slow-checks     # skip dbt debug (the slow check)
+    python -m tools.runbook --config PATH          # override config path
+    python -m tools.runbook --state PATH           # override state path
 
 All non-secret inputs are persisted to --config (default runbook_config.json)
 so they can be reused or version-controlled. Secrets (pepper) are never
@@ -17,13 +21,15 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime
+from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 
 from rich.console import Console
 from rich.panel import Panel
 
 from .config import RunbookConfig, SecretError, SecretResolver
+from .connectivity import ConnectivityReport, run_all_checks
 from .stages import (
     STAGES,
     BqCheck,
@@ -34,11 +40,14 @@ from .stages import (
 )
 from .state import RunState
 from .ui import (
+    ask_connectivity_failure,
     ask_next_action,
     ask_on_failure,
     collect_config_wizard,
     confirm,
     render_config_summary,
+    render_connectivity_progress,
+    render_connectivity_report,
     render_dry_run_report,
     render_exit_report,
     render_header,
@@ -79,6 +88,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Print the stage list and exit.",
     )
     p.add_argument(
+        "--check-hashing",
+        action="store_true",
+        help="Resolve the pepper and run only dbt deps + dbt parse with hashing enabled, then exit.",
+    )
+    p.add_argument(
         "--config",
         type=Path,
         default=DEFAULT_CONFIG_PATH,
@@ -94,6 +108,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--no-save-config",
         action="store_true",
         help="Do not write the collected config back to --config.",
+    )
+    p.add_argument(
+        "--check-connectivity",
+        action="store_true",
+        help="Run only the pre-flight connectivity checks (no wizard changes, no stages) and exit.",
+    )
+    p.add_argument(
+        "--skip-connectivity",
+        action="store_true",
+        help="Skip the pre-flight connectivity checks during a real run (not recommended).",
+    )
+    p.add_argument(
+        "--skip-slow-checks",
+        action="store_true",
+        help="Skip slow connectivity checks like `dbt debug`. Fast checks still run.",
     )
     return p.parse_args(argv)
 
@@ -128,10 +157,32 @@ def _resolve_pepper(cfg: RunbookConfig) -> str | None:
 
 
 def _log_path(cfg: RunbookConfig) -> Path:
-    ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     log_dir = REPO_ROOT / cfg.log_dir
     log_dir.mkdir(parents=True, exist_ok=True)
     return log_dir / f"runbook_{ts}.log"
+
+
+def _run_connectivity(
+    cfg: RunbookConfig,
+    *,
+    console: Console,
+    skip_slow: bool,
+) -> ConnectivityReport:
+    console.print()
+    console.print("[bold cyan]Running pre-flight connectivity checks…[/bold cyan]")
+    if skip_slow:
+        console.print("[dim](slow checks like `dbt debug` are being skipped)[/dim]")
+
+    def progress(chk) -> None:  # ConnectivityCheck, kept loose to avoid circular import
+        render_connectivity_progress(console, chk.name, chk.description)
+
+    return run_all_checks(
+        cfg,
+        repo_root=REPO_ROOT,
+        skip_slow=skip_slow,
+        progress_cb=progress,
+    )
 
 
 def _execute_stage(
@@ -178,8 +229,7 @@ def _execute_stage(
                 ok, summary = True, f"{len(rows)} rows"
             render_validator_result(console, check.name, check.description, ok, summary, rows)
             validator_results.append((check.name, ok, summary))
-        # A stage with only failing validators is considered failed.
-        if stage.check_only and validator_results and not any(ok for _, ok, _ in validator_results):
+        if validator_results and not all(ok for _, ok, _ in validator_results):
             return False, validator_results
 
     return True, validator_results
@@ -206,11 +256,17 @@ def _load_or_collect_config(
         console.print(f"[dim]Resuming with config from {args.config}[/dim]")
         return existing
 
-    # In dry-run with an existing config, reuse it non-interactively so
-    # `make runbook-dry-run` is scriptable.
-    if args.dry_run and existing is not None:
+    # In dry-run or one-shot check modes with an existing config, reuse it
+    # non-interactively so the commands stay scriptable.
+    if (args.dry_run or args.check_connectivity or args.check_hashing) and existing is not None:
         render_config_summary(console, existing, title=f"Loaded config from {args.config.name}")
-        console.print("[dim]Dry-run: reusing existing config without prompting.[/dim]")
+        if args.dry_run:
+            mode = "Dry-run"
+        elif args.check_connectivity:
+            mode = "Connectivity check"
+        else:
+            mode = "Hashing check"
+        console.print(f"[dim]{mode}: reusing existing config without prompting.[/dim]")
         return existing
 
     if existing is not None:
@@ -246,6 +302,56 @@ def _decide_resume(
     return state
 
 
+def _run_hashing_smoke_test(cfg: RunbookConfig, console: Console) -> int:
+    smoke_cfg = replace(cfg, hash_person_source_value=True)
+    errors = smoke_cfg.validate(base_dir=REPO_ROOT)
+    if errors:
+        console.print(
+            Panel(
+                "\n".join(f"• {e}" for e in errors),
+                title="[red]Config errors[/red]",
+                border_style="red",
+            )
+        )
+        return 2
+
+    if not cfg.hash_person_source_value:
+        console.print(
+            "[yellow]Hashing is disabled in the saved config; "
+            "forcing it on for this smoke test only.[/yellow]"
+        )
+
+    pepper = _resolve_pepper(smoke_cfg)
+    extra_env = {"DBT_PEPPER": pepper} if pepper else None
+    if pepper:
+        console.print("[dim]Pepper resolved successfully (not shown).[/dim]")
+
+    log_path = _log_path(smoke_cfg)
+    console.print(f"[dim]Logging to {log_path}[/dim]")
+    console.print(
+        Panel.fit(
+            "Hashing smoke test: running only dbt deps + dbt parse with "
+            "hash_person_source_value=true.",
+            border_style="cyan",
+        )
+    )
+
+    stage = next(s for s in STAGES if s.key == "dbt_parse")
+    ok, _ = _execute_stage(
+        stage,
+        smoke_cfg,
+        console=console,
+        log_path=log_path,
+        extra_env=extra_env,
+    )
+    if ok:
+        console.print("[green]Hashing smoke test passed.[/green]")
+        return 0
+
+    console.print("[red]Hashing smoke test failed.[/red]")
+    return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     console = Console()
@@ -257,27 +363,81 @@ def main(argv: list[str] | None = None) -> int:
 
     cfg = _load_or_collect_config(args, console)
 
-    errors = cfg.validate()
+    if args.check_hashing:
+        return _run_hashing_smoke_test(cfg, console)
+
+    errors = cfg.validate(base_dir=REPO_ROOT)
     if errors:
+        # In --check-connectivity mode, local-only issues like "vocab zip
+        # missing" don't affect network reachability — downgrade to a
+        # warnings panel and keep going. The connectivity checks themselves
+        # will surface anything that matters for this mode.
+        title = (
+            "[yellow]Config warnings[/yellow]"
+            if args.check_connectivity
+            else "[red]Config errors[/red]"
+        )
+        border = "yellow" if args.check_connectivity else "red"
         console.print(
             Panel(
                 "\n".join(f"• {e}" for e in errors),
-                title="[red]Config errors[/red]",
-                border_style="red",
+                title=title,
+                border_style=border,
             )
         )
-        if not args.dry_run:
+        if not args.dry_run and not args.check_connectivity:
             return 2
 
     if args.dry_run:
         render_dry_run_report(console, cfg)
         return 0
 
+    # -- Pre-flight connectivity phase --
+    # Verify that the configured servers/resources are actually reachable
+    # before we start running stages. This catches auth/network/URL
+    # mistakes in seconds instead of minutes into the run.
+    if args.check_connectivity:
+        report = _run_connectivity(cfg, console=console, skip_slow=args.skip_slow_checks)
+        render_connectivity_report(console, report)
+        return 0 if not report.any_failed() else 3
+
+    if not args.skip_connectivity:
+        report = _run_connectivity(cfg, console=console, skip_slow=args.skip_slow_checks)
+        render_connectivity_report(console, report)
+        if report.any_failed():
+            choice = ask_connectivity_failure()
+            if choice == "abort":
+                return 3
+            if choice == "rerun_wizard":
+                # Force the wizard, re-check, then continue if clean.
+                cfg = collect_config_wizard(cfg, console=console)
+                if not args.no_save_config:
+                    cfg.save(args.config)
+                    console.print(f"[green]Saved config to {args.config}[/green]")
+                errors = cfg.validate(base_dir=REPO_ROOT)
+                if errors:
+                    console.print(
+                        Panel(
+                            "\n".join(f"• {e}" for e in errors),
+                            title="[red]Config errors[/red]",
+                            border_style="red",
+                        )
+                    )
+                    return 2
+                report = _run_connectivity(cfg, console=console, skip_slow=args.skip_slow_checks)
+                render_connectivity_report(console, report)
+                if report.any_failed():
+                    console.print(
+                        "[red]Connectivity still failing after wizard — aborting.[/red]"
+                    )
+                    return 3
+            # else: proceed — user explicitly overrode
+
     # -- Resolve pepper up-front so we fail fast if the source is broken --
     pepper = _resolve_pepper(cfg)
     extra_env: dict[str, str] = {}
     if pepper:
-        extra_env["DBT_PEPPER"] = pepper  # referenced by dbt vars via env_var()
+        extra_env["DBT_PEPPER"] = pepper  # consumed by the dbt hashing macro via env_var()
         console.print("[dim]Pepper resolved successfully (not shown).[/dim]")
 
     # -- State + log setup --
@@ -290,7 +450,7 @@ def main(argv: list[str] | None = None) -> int:
     console.print(f"[dim]Logging to {log_path}[/dim]")
 
     total = len(STAGES)
-    all_validator_results: list[tuple[str, bool, str]] = []
+    latest_validator_results: dict[str, tuple[bool, str]] = {}
 
     for idx, stage in enumerate(STAGES, start=1):
         if state.is_completed(stage.key):
@@ -323,7 +483,8 @@ def main(argv: list[str] | None = None) -> int:
                 state.mark_failed(stage.key, "interrupted")
                 state.save(args.state)
                 return 130
-            all_validator_results.extend(results)
+            for name, ok, summary in results:
+                latest_validator_results[name] = (ok, summary)
 
             if ok:
                 state.mark_completed(stage.key)
@@ -346,7 +507,7 @@ def main(argv: list[str] | None = None) -> int:
         cfg,
         completed=state.completed_names(),
         failed=state.failed_names(),
-        check_results=all_validator_results,
+        check_results=latest_validator_results,
     )
     return 0 if not state.failed_names() else 1
 

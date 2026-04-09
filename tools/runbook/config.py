@@ -1,7 +1,7 @@
 """
 Config + secret resolution for the runbook wizard.
 
-RunbookConfig holds every non-secret input needed to drive the 10 validation
+RunbookConfig holds every non-secret input needed to drive the 11 validation
 stages. It is serialized to JSON so the user can resume or reuse between runs.
 
 Secrets (today: person_source_value_pepper) are NEVER written into the config
@@ -89,9 +89,17 @@ class RunbookConfig:
     # -------------------------------------------------------------------------
     # Validation
     # -------------------------------------------------------------------------
-    def validate(self) -> list[str]:
+    def validate(self, base_dir: str | Path | None = None) -> list[str]:
         """Return a list of human-readable validation errors. Empty == OK."""
         errs: list[str] = []
+        root = Path(base_dir).expanduser() if base_dir is not None else None
+
+        def resolve_path(path_str: str) -> Path:
+            path = Path(path_str).expanduser()
+            if path.is_absolute() or root is None:
+                return path
+            return root / path
+
         if not self.gcp_project:
             errs.append("gcp_project is required")
         if self.pepper_source not in PEPPER_SOURCES:
@@ -108,12 +116,12 @@ class RunbookConfig:
             )
         if not self.skip_hapi_export and not self.hapi_base_url:
             errs.append("hapi_base_url is required unless skip_hapi_export=true")
-        if not self.skip_vocab_load and not Path(self.athena_vocab_zip).expanduser().exists():
+        if not self.skip_vocab_load and not resolve_path(self.athena_vocab_zip).exists():
             errs.append(
                 f"athena_vocab_zip not found: {self.athena_vocab_zip}"
                 " (set skip_vocab_load=true if already loaded)"
             )
-        if not Path(self.dbt_project_dir).expanduser().exists():
+        if not resolve_path(self.dbt_project_dir).exists():
             errs.append(f"dbt_project_dir not found: {self.dbt_project_dir}")
         return errs
 

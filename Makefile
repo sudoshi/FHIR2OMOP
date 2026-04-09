@@ -10,8 +10,19 @@
 
 GCP_REGION ?= southamerica-west1
 GCS_LANDING ?= gs://$(GCP_PROJECT)-fhir-landing
+RUNBOOK_VENV := tools/runbook/.venv
 
-.PHONY: check datasets buckets vocab ingest load dbt-parse dbt-build dbt-test dqd all clean-raw runbook runbook-dry-run runbook-resume runbook-install runbook-clean
+ifeq ($(OS),Windows_NT)
+PYTHON ?= py -3
+RUNBOOK_VENV_BIN := Scripts
+RUNBOOK_PY := $(RUNBOOK_VENV)/$(RUNBOOK_VENV_BIN)/python.exe
+else
+PYTHON ?= python3
+RUNBOOK_VENV_BIN := bin
+RUNBOOK_PY := $(RUNBOOK_VENV)/$(RUNBOOK_VENV_BIN)/python
+endif
+
+.PHONY: check datasets buckets vocab ingest load dbt-parse dbt-build dbt-test dqd all clean-raw runbook runbook-dry-run runbook-resume runbook-check-hashing runbook-install runbook-clean runbook-check-connectivity
 
 check:
 	@test -n "$(GCP_PROJECT)" || (echo "ERROR: GCP_PROJECT not set" && exit 1)
@@ -74,17 +85,16 @@ clean-raw: check
 # without --break-system-packages, so a venv is the right call anyway.
 # -----------------------------------------------------------------------------
 
-RUNBOOK_VENV := tools/runbook/.venv
-RUNBOOK_PY   := $(RUNBOOK_VENV)/bin/python
-
 runbook-install:
-	python3 -m venv $(RUNBOOK_VENV)
+	$(PYTHON) -m venv $(RUNBOOK_VENV)
 	$(RUNBOOK_PY) -m pip install --upgrade pip
 	$(RUNBOOK_PY) -m pip install -r tools/runbook/requirements.txt
 	@echo ""
 	@echo "runbook TUI installed into $(RUNBOOK_VENV)"
+	@echo "venv python: $(RUNBOOK_PY)"
 	@echo "Next: make runbook-dry-run   (preview)"
 	@echo "      make runbook           (real interactive run)"
+	@echo "      make runbook-check-hashing  (hashing preflight)"
 
 runbook:
 	@test -x $(RUNBOOK_PY) || (echo "runbook venv missing — run 'make runbook-install' first" && exit 1)
@@ -97,6 +107,14 @@ runbook-dry-run:
 runbook-resume:
 	@test -x $(RUNBOOK_PY) || (echo "runbook venv missing — run 'make runbook-install' first" && exit 1)
 	$(RUNBOOK_PY) -m tools.runbook --resume
+
+runbook-check-hashing:
+	@test -x $(RUNBOOK_PY) || (echo "runbook venv missing — run 'make runbook-install' first" && exit 1)
+	$(RUNBOOK_PY) -m tools.runbook --check-hashing
+
+runbook-check-connectivity:
+	@test -x $(RUNBOOK_PY) || (echo "runbook venv missing — run 'make runbook-install' first" && exit 1)
+	$(RUNBOOK_PY) -m tools.runbook --check-connectivity
 
 runbook-clean:
 	rm -rf $(RUNBOOK_VENV)

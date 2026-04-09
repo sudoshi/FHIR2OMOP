@@ -23,6 +23,7 @@ Audience: the Chile team (Roche LIMS → HAPI FHIR → OMOP on BigQuery).
 
 ```bash
 # 0. Prereqs: gcloud SDK, python 3.11+, dbt-bigquery, bq CLI, a GCP project.
+#    See docs/PREREQUISITES.md for macOS/Linux/Windows details.
 export GCP_PROJECT=chile-omop-prod
 export GCP_REGION=southamerica-west1
 
@@ -77,8 +78,9 @@ rationale for each layer.
 
 - **Sensitive data handling.** You must hash `PERSON.person_source_value`
   in production. `dbt/macros/hash_mrn.sql` now supports this via
-  `hash_person_source_value: true` plus a
-  `person_source_value_pepper` var; keep it disabled in local/dev.
+  `hash_person_source_value: true` plus either a
+  `person_source_value_pepper` var or `$DBT_PEPPER`; keep it disabled in
+  local/dev.
 - **Mirror to Cloud Healthcare API FHIR store.** Optional Layer 2 from the
   brief. If you go that route you can skip `ingest/ndjson_to_bq.py`
   entirely and point `sources.yml` at the Analytics V2 tables the

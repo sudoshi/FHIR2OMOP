@@ -6,6 +6,165 @@ and what's still open.
 
 ---
 
+## 2026-04-09 — Runbook TUI: connectivity checks, hashing smoke test, behavioural tests
+
+Second pass on `tools/runbook/` the same day. Three related changes:
+
+### Pre-flight connectivity checks (`tools/runbook/connectivity.py`, new)
+
+The original TUI collected ~15 inputs and then started executing
+stages. If the HAPI URL was wrong, or gcloud hadn't been auth'd, or
+the dbt profile pointed at a project the user couldn't see, you'd
+only find out minutes into the run, inside stage 1 or 2. The first
+real Chile run is not the time to discover that.
+
+Added a `run_all_checks(cfg)` pre-flight phase that runs before any
+stage and returns a `ConnectivityReport` of 10 checks, each with a
+level (`pass` / `warn` / `fail` / `skip`), a one-line summary, and a
+remediation hint:
+
+| # | Check | What it verifies |
+|---|---|---|
+| 1 | `gcloud_auth` | `gcloud auth list` has an active account |
+| 2 | `gcloud_adc` | `gcloud auth application-default print-access-token` works |
+| 3 | `bq_project` | `bq ls --project_id=…` succeeds |
+| 4 | `gcs_bucket` | `gcloud storage ls gs://…` — WARN if bucket missing (bootstrap will create it), FAIL on permission errors |
+| 5 | `hapi_metadata` | HTTP GET `{base}/metadata`, parses as CapabilityStatement, reports fhirVersion; 401 is WARN not FAIL |
+| 6 | `athena_vocab` | Zip exists, is a real zip, and contains `CONCEPT.csv` / `CONCEPT_RELATIONSHIP.csv` / `VOCABULARY.csv` |
+| 7 | `dbt_version` | `dbt --version` works and mentions a BigQuery adapter |
+| 8 | `dbt_debug` (slow) | `dbt debug --target …` — exercises profile + OAuth + real BQ query |
+| 9 | `pepper_source` | Resolves the configured pepper source without logging the value (WARN if < 8 chars) |
+| 10 | `rscript` | `Rscript --version` on `$PATH` (only if DQD is enabled) |
+
+Checks run automatically after the wizard and before the stage loop.
+Three new CLI flags:
+
+- `--check-connectivity` — standalone mode; run only the checks and
+  exit 0 (all pass) or 3 (any fail). Bypasses the "Reuse this
+  config?" prompt so `make runbook-check-connectivity` is
+  scriptable.
+- `--skip-connectivity` — explicit opt-out on a real run. Discouraged.
+- `--skip-slow-checks` — skip `dbt_debug` only; everything else still
+  runs.
+
+Failure handling: on any FAIL, the TUI prompts `abort` /
+`rerun_wizard` / `proceed` (default abort). `rerun_wizard` re-walks
+the wizard with current answers as defaults, re-saves, and re-runs
+the checks before continuing.
+
+Two real bugs caught and fixed while testing against the public
+`hapi.fhir.org/baseR4`:
+
+1. **HAPI body truncation.** First run got "non-JSON response" on a
+   request that was clearly valid JSON — I was only reading 8192
+   bytes of a CapabilityStatement that can exceed 100KB. Bumped to a
+   4MB read cap.
+2. **Config validation blocked the mode.** A local-only issue like
+   "vocab zip missing" short-circuited before connectivity ran —
+   pointless in a mode whose whole job is to test network/system
+   reachability independent of local files. Downgraded config
+   issues to a yellow warnings panel in `--check-connectivity` mode
+   so the checks still execute.
+
+Rendering lives in `ui.py::render_connectivity_report` so
+`connectivity.py` stays free of `rich`/`questionary` imports. The
+runner accepts a `progress_cb` so the UI can emit a live `· running
+check: …` line per check — matters for the `dbt debug` case, which
+can take 10–30s and would otherwise look hung.
+
+Integration points:
+
+- `tools/runbook/connectivity.py` — new module (~450 lines)
+- `tools/runbook/__main__.py` — new flags, wiring, failure-prompt loop
+- `tools/runbook/ui.py` — `render_connectivity_report`,
+  `render_connectivity_progress`, `ask_connectivity_failure`
+- `Makefile` — new `runbook-check-connectivity` target
+- `docs/RUNBOOK_TUI.md` — "Pre-flight connectivity checks" section
+  with check table, failure-handling description, skip modes, and
+  sample output block
+
+### Hashing: cleaner pepper wiring and a dedicated smoke test
+
+The first TUI revision passed the pepper to dbt via
+`--vars '{hash_person_source_value: true, person_source_value_pepper: "{{ env_var(\'DBT_PEPPER\') }}"}'`
+which worked but was ugly and risked leaking the Jinja reference into
+logs or the dry-run preview. Refactored so:
+
+- `dbt/macros/hash_mrn.sql` now reads
+  `var('person_source_value_pepper', env_var('DBT_PEPPER', ''))` —
+  dbt picks up the pepper from `$DBT_PEPPER` as a fallback when the
+  var isn't explicitly set. Error message updated to mention both.
+- `tools/runbook/stages.py::_dbt_vars_args()` now returns just
+  `["--vars", "{hash_person_source_value: true}"]` when hashing is
+  enabled. No pepper reference in argv, ever. The macro picks it up
+  from the environment via `env_var()`.
+- `docs/WAREHOUSE_VALIDATION_RUNBOOK.md` §5 sample command updated to
+  `DBT_PEPPER='...' dbt parse --vars '{hash_person_source_value: true}'`.
+- `README.md` reflects the new `$DBT_PEPPER`-or-var option.
+
+New `--check-hashing` flag and `_run_hashing_smoke_test()` in
+`__main__.py`: forces `hash_person_source_value=true` (even if the
+saved config has it off), resolves the pepper, runs just `dbt deps` +
+`dbt parse` from the `dbt_parse` stage, and exits. Lets you verify
+secret wiring end-to-end without committing to a full run.
+
+Corresponding Make target: `make runbook-check-hashing`.
+
+### Behavioural test suite (`tools/runbook/test_runbook.py`, new)
+
+Six unittest tests covering the pieces that would silently drift if
+someone edited them wrong:
+
+1. `run_command` returns 127 with a helpful log line when the binary
+   is missing (the FileNotFoundError path added during the pepper
+   refactor).
+2. A `check_only` stage correctly reports failure when any validator
+   fails but records all validator results regardless.
+3. `RunbookConfig.validate(base_dir=…)` is stable across cwd changes
+   so the `dbt_project_dir` check doesn't depend on where the TUI
+   was launched from.
+4. `exit_criteria_statuses` reads results by name (`raw_tables`,
+   `final_person_measurement`, `measurement_gaps`, `observation_gaps`)
+   so an old stale result can't contaminate the criterion table.
+5. `_dbt_vars_args` with hashing enabled returns the plain
+   `{hash_person_source_value: true}` vars string — no pepper
+   reference.
+6. `_run_hashing_smoke_test` does not mutate the caller's config
+   (uses `dataclasses.replace` for the forced-hashing copy).
+
+All 6 pass against the venv at `tools/runbook/.venv/`.
+
+### Verified
+
+- `tools/runbook/.venv/bin/python -m unittest tools.runbook.test_runbook -v`
+  — 6/6 pass in 0.004s
+- `make runbook-check-connectivity` on a machine with no gcloud auth —
+  correctly reports 1 pass (HAPI public server), 7 fails (gcloud,
+  bq, gcs, dbt, pepper), 2 skips (vocab, Rscript); Python exits 3,
+  Make wraps that as its own "Error 3" and exits 2
+- HAPI connectivity check against `https://hapi.fhir.org/baseR4` —
+  PASS, "HAPI FHIR Server, FHIR 4.0.1"
+- `--dry-run` with a saved config — zero mentions of "CONNECTIVITY" in
+  output (dry-run stays network-free)
+- `--skip-connectivity --dry-run` — also zero CONNECTIVITY output
+- `--list-stages` — renders the 11-stage table and exits 0
+- `--check-connectivity` now bypasses the "Reuse this config?" prompt
+
+### Open follow-ups
+
+- Still not verified against a real GCP project. Every bug caught so
+  far has been either local or against public HAPI.
+- The `dbt_debug` check shells out and blocks ~10–30s; consider
+  running it in a background thread with a spinner, but not worth
+  it for a one-shot pre-flight.
+- The `gcs_bucket` check currently treats "bucket missing" as WARN
+  because bootstrap creates it. Could tighten to actually try a
+  dry-run create (`gcloud storage buckets create --dry-run`) to
+  verify the IAM permission. Not done — Chile's service account
+  policy is still being worked out.
+
+---
+
 ## 2026-04-09 — Interactive TUI wrapper for the warehouse validation runbook
 
 Added `tools/runbook/`, a `rich` + `questionary` TUI that walks the user
@@ -27,9 +186,9 @@ the inevitable re-run.
   The config stores a `pepper_source` (one of `prompt`, `env`, `dotenv`,
   `pass`, `gcloud`) plus an optional `pepper_ref` (env var name, dotenv
   key, `pass` path, or `gcloud secrets` name). At run start, the pepper
-  is resolved once, placed in `$DBT_PEPPER`, and referenced from
-  `dbt --vars` via `env_var('DBT_PEPPER')` — so it never appears in
-  argv, logs, or dry-run previews.
+  is resolved once, placed in `$DBT_PEPPER`, and read by the dbt hashing
+  macro via `env_var()` when hashing is enabled — so it never appears
+  in argv, logs, or dry-run previews.
 - **Dry-run:** `python -m tools.runbook --dry-run` loads or collects the
   config and prints the full list of inputs + every shell command + every
   BigQuery validator that would run, with no side effects. Useful before
@@ -61,8 +220,10 @@ tools/runbook/
   requirements.txt     # rich, questionary, python-dotenv
 ```
 
-Three new Make targets (`runbook`, `runbook-dry-run`, `runbook-resume`,
-`runbook-install`). Stage list is data-driven from `stages.STAGES`, so
+Runbook Make targets now include `runbook`, `runbook-dry-run`,
+`runbook-resume`, `runbook-check-connectivity`,
+`runbook-check-hashing`, and `runbook-install`. Stage list is
+data-driven from `stages.STAGES`, so
 adding a §11 or splitting a stage means editing one list.
 
 ### Deliberate non-goals
@@ -98,8 +259,9 @@ adding a §11 or splitting a stage means editing one list.
 - Broken config (missing `gcp_project`, `pepper_ref`, nonexistent
   `dbt_project_dir`, etc.) surfaces all 5 errors in a red panel instead
   of crashing
-- dbt `--vars` string uses `{{ env_var('DBT_PEPPER') }}` so the pepper
-  does not appear in argv or subprocess logs even at real execution time
+- When production hashing is enabled, the runbook places the pepper in
+  `$DBT_PEPPER` and the dbt hashing macro reads it via `env_var()`, so
+  the pepper does not appear in argv or subprocess logs
 
 ### Open follow-ups
 
