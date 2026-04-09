@@ -41,3 +41,9 @@ Thumbs.db
 
 # Local Claude settings
 .claude/settings.local.json
+
+# Runbook TUI artifacts
+runbook_config.json
+.runbook_state.json
+.runbook_state.json.bak
+logs/runbook_*.log

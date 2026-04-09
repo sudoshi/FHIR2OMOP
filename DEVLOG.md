@@ -6,6 +6,114 @@ and what's still open.
 
 ---
 
+## 2026-04-09 — Interactive TUI wrapper for the warehouse validation runbook
+
+Added `tools/runbook/`, a `rich` + `questionary` TUI that walks the user
+through every step of `docs/WAREHOUSE_VALIDATION_RUNBOOK.md`. The runbook
+is long, opinionated, and has ~15 distinct inputs (GCP project/region,
+landing bucket, HAPI URL, vocab zip path, dbt target, run window,
+person_source_value pepper, etc.). For a first real pipeline run against
+Chile's HAPI instance, the odds of fumbling an env var or skipping a
+validation query are high enough that a guided wrapper is cheaper than
+the inevitable re-run.
+
+### What the TUI does
+
+- **Wizard:** collects every input with sensible defaults, hides HAPI
+  prompts when the user says data is already in `fhir_raw`, hides vocab
+  prompts when `omop_vocab` is already loaded, and only asks about
+  hashing/pepper when production hashing is enabled.
+- **Secret resolution:** the pepper is never written to the config file.
+  The config stores a `pepper_source` (one of `prompt`, `env`, `dotenv`,
+  `pass`, `gcloud`) plus an optional `pepper_ref` (env var name, dotenv
+  key, `pass` path, or `gcloud secrets` name). At run start, the pepper
+  is resolved once, placed in `$DBT_PEPPER`, and referenced from
+  `dbt --vars` via `env_var('DBT_PEPPER')` — so it never appears in
+  argv, logs, or dry-run previews.
+- **Dry-run:** `python -m tools.runbook --dry-run` loads or collects the
+  config and prints the full list of inputs + every shell command + every
+  BigQuery validator that would run, with no side effects. Useful before
+  ever pointing it at a real project.
+- **Resume:** stage progress is persisted to `.runbook_state.json`.
+  `--resume` picks up after the last completed stage. On failure the
+  user gets retry / continue / abort prompts.
+- **Validators:** the BigQuery checks from `§4` and `§7` of the runbook
+  (raw table presence, OMOP row counts, `measurement_concept_id = 0`
+  rate, `unit_concept_id = 0` rate, `person_id IS NULL` count, etc.) are
+  executed via `bq --format=json` and rendered as PASS/FAIL rows with a
+  summary line. Judgment calls ("is 12% unknown-concept acceptable?")
+  stay with the human — the TUI just surfaces the numbers.
+- **Exit report:** at the end, a rich table maps the §10 exit criteria
+  onto stage outcomes and tells the user which failed, then points them
+  at `logs/runbook_<ts>.log` and the next-action items from the runbook
+  itself (expanding seed CSVs, manually reviewed patient round-trip).
+
+### Structure
+
+```
+tools/runbook/
+  __init__.py
+  __main__.py          # argparse + orchestration (355 lines)
+  config.py            # RunbookConfig + SecretResolver (259 lines)
+  state.py             # .runbook_state.json resume (127 lines)
+  stages.py            # 11 stages + BQ validators + runner (688 lines)
+  ui.py                # rich + questionary wizard (404 lines)
+  requirements.txt     # rich, questionary, python-dotenv
+```
+
+Three new Make targets (`runbook`, `runbook-dry-run`, `runbook-resume`,
+`runbook-install`). Stage list is data-driven from `stages.STAGES`, so
+adding a §11 or splitting a stage means editing one list.
+
+### Deliberate non-goals
+
+- **No judgment automation.** The TUI surfaces unknown-concept rates and
+  row counts; it does not try to decide whether they're acceptable. The
+  runbook is explicit that the first-run goal is "separate structural
+  failures from expected mapping backlog" — that needs a human.
+- **No state machine across runs.** The resume support is scoped to a
+  single run; if you change the config mid-run, you rerun affected
+  stages. This keeps the state file dumb and inspectable.
+- **Not a replacement for the runbook itself.** The Markdown runbook
+  stays authoritative. The TUI's stage descriptions all reference their
+  `§N` section so reviewers can trace them back.
+
+### Files
+
+- `tools/runbook/*` (new package)
+- `tools/__init__.py` (new, empty)
+- `Makefile` — added `runbook`, `runbook-dry-run`, `runbook-resume`,
+  `runbook-install` targets
+- `.gitignore` — added `runbook_config.json`, `.runbook_state.json`,
+  `logs/runbook_*.log`
+- `docs/RUNBOOK_TUI.md` — end-user guide (this entry is the dev-facing
+  narrative; `RUNBOOK_TUI.md` is the operator-facing "how to use it")
+
+### Verified locally
+
+- `python -m tools.runbook --list-stages` renders the 11-stage table
+- `python -m tools.runbook --dry-run --config <path>` loads a saved
+  config, renders the input summary and secret-source panel, and prints
+  every command across all 11 stages without executing anything
+- Broken config (missing `gcp_project`, `pepper_ref`, nonexistent
+  `dbt_project_dir`, etc.) surfaces all 5 errors in a red panel instead
+  of crashing
+- dbt `--vars` string uses `{{ env_var('DBT_PEPPER') }}` so the pepper
+  does not appear in argv or subprocess logs even at real execution time
+
+### Open follow-ups
+
+- Point it at a real GCP project once application-default credentials
+  are configured on this machine. Until then everything is still paper.
+- Consider adding a `--yes` / non-interactive batch flag for CI once the
+  single-user flow is stable. Not needed for the first-run use case.
+- The `prereq` stage's `dbt --version` check will fail on a machine
+  without dbt-bigquery installed — deliberately, so the user fixes it
+  before continuing, but the error message could point them at
+  `pip install dbt-bigquery`.
+
+---
+
 ## 2026-04-09 — §9.1 / §9.2 / §9.3 follow-ups from the public HAPI test report
 
 Cleared the three highest-value items from `ingest/HAPI-PUBLIC-TEST-REPORT.md`

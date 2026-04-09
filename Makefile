@@ -11,7 +11,7 @@
 GCP_REGION ?= southamerica-west1
 GCS_LANDING ?= gs://$(GCP_PROJECT)-fhir-landing
 
-.PHONY: check datasets buckets vocab ingest load dbt-parse dbt-build dbt-test dqd all clean-raw
+.PHONY: check datasets buckets vocab ingest load dbt-parse dbt-build dbt-test dqd all clean-raw runbook runbook-dry-run runbook-resume runbook-install
 
 check:
 	@test -n "$(GCP_PROJECT)" || (echo "ERROR: GCP_PROJECT not set" && exit 1)
@@ -63,3 +63,20 @@ clean-raw: check
 	@echo "This will DROP $(GCP_PROJECT):fhir_raw — Ctrl+C to abort"
 	@sleep 5
 	bq rm -r -f -d $(GCP_PROJECT):fhir_raw
+
+# -----------------------------------------------------------------------------
+# Interactive warehouse-validation runbook (TUI)
+# See WAREHOUSE_VALIDATION_RUNBOOK.md and tools/runbook/
+# -----------------------------------------------------------------------------
+
+runbook-install:
+	pip install -r tools/runbook/requirements.txt
+
+runbook:
+	python -m tools.runbook
+
+runbook-dry-run:
+	python -m tools.runbook --dry-run
+
+runbook-resume:
+	python -m tools.runbook --resume
