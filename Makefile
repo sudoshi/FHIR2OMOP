@@ -11,7 +11,7 @@
 GCP_REGION ?= southamerica-west1
 GCS_LANDING ?= gs://$(GCP_PROJECT)-fhir-landing
 
-.PHONY: check datasets buckets vocab ingest load dbt-build dbt-test dqd all clean-raw
+.PHONY: check datasets buckets vocab ingest load dbt-parse dbt-build dbt-test dqd all clean-raw
 
 check:
 	@test -n "$(GCP_PROJECT)" || (echo "ERROR: GCP_PROJECT not set" && exit 1)
@@ -44,6 +44,9 @@ load: check
 	  --location $(GCP_REGION) \
 	  --gcs-landing $(GCS_LANDING) \
 	  --run-date $$(date +%Y-%m-%d)
+
+dbt-parse:
+	cd dbt && dbt deps && dbt parse
 
 dbt-build:
 	cd dbt && dbt deps && dbt seed && dbt build --select tag:omop

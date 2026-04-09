@@ -43,11 +43,10 @@ select
     l.location_id                                             as location_id,
     cast(null as int64)                                       as provider_id,
     cast(null as int64)                                       as care_site_id,
-    -- IMPORTANT: the brief says to hash the MRN with a project-wide pepper
-    -- before it lands here. If you want that hashing to happen in BigQuery,
-    -- wrap this in {{ hash_mrn('p.identifier_value') }}. For now we pass
-    -- it through unchanged so the pipeline runs end-to-end in dev.
-    p.fhir_patient_id                                         as person_source_value,
+    -- Keep the source-system identifier in OMOP and optionally hash it.
+    -- Downstream joins use person_id (derived from the FHIR logical id), not
+    -- person_source_value, so pseudonymization here is safe.
+    {{ hash_mrn("coalesce(p.identifier_value, p.fhir_patient_id)") }} as person_source_value,
     p.gender                                                  as gender_source_value,
     cast(null as int64)                                       as gender_source_concept_id,
     p.race_code                                               as race_source_value,

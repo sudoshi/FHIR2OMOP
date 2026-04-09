@@ -7,7 +7,7 @@ with s as (
 ),
 
 p as (
-    select person_id, person_source_value from {{ ref('person') }}
+    select person_id from {{ ref('person') }}
 ),
 
 -- Map SNOMED codes to standard concept_ids. SNOMED in Athena is usually standard already.
@@ -35,6 +35,6 @@ select
     s.body_site_snomed_code                                                   as anatomic_site_source_value,
     cast(null as string)                                                      as disease_status_source_value
 from s
-join p on p.person_source_value = s.patient_ref
+join p on p.person_id = {{ hash_id('s.patient_ref') }}
 left join snomed type_c on type_c.concept_code = s.type_snomed_code
 left join snomed site_c on site_c.concept_code = s.body_site_snomed_code

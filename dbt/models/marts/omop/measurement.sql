@@ -33,14 +33,15 @@
 with lab as (
     select * from {{ ref('stg_fhir__observation_lab') }}
     {% if is_incremental() %}
-      where _loaded_at > (select coalesce(max(_max_loaded_at), timestamp('1970-01-01'))
-                          from (select max(measurement_datetime) as _max_loaded_at
-                                from {{ this }}))
+      where _loaded_at >= (
+        select coalesce(max(_loaded_at), timestamp('1970-01-01'))
+        from {{ this }}
+      )
     {% endif %}
 ),
 
 p as (
-    select person_id, person_source_value from {{ ref('person') }}
+    select person_id from {{ ref('person') }}
 ),
 
 loinc as (
@@ -60,12 +61,17 @@ operator as (
 ),
 
 test_seed as (
-    select source_code, target_concept_id, source_concept_id
+    select source_code, source_code_system, target_concept_id, source_concept_id
     from {{ ref('seed_test_source_to_concept') }}
 ),
 
 unit_seed as (
     select source_unit, target_concept_id from {{ ref('seed_unit_source_to_concept') }}
+),
+
+source_concept as (
+    select system_uri, concept_code, concept_id
+    from {{ ref('int_fhir_source_code_lookup') }}
 ),
 
 visit_detail_lookup as (
@@ -129,8 +135,10 @@ joined as (
         vo.visit_occurrence_id                                                              as visit_occurrence_id,
         vdl.visit_detail_id                                                                 as visit_detail_id,
 
-        l.fhir_observation_id                                                               as measurement_source_value,
-        coalesce(l_loinc.concept_id, l_seed.source_concept_id,
+        l.source_code                                                                       as measurement_source_value,
+        coalesce(
+            nullif(l_seed.source_concept_id, 0),
+            src.concept_id,
                  {{ var('unknown_concept_id') }})                                           as measurement_source_concept_id,
         l.unit_source                                                                       as unit_source_value,
         coalesce(
@@ -146,13 +154,18 @@ joined as (
 
         l._loaded_at                                                                        as _loaded_at
     from lab_normalized l
-    join p             on p.person_source_value = l.patient_ref
+    join p             on p.person_id = {{ hash_id('l.patient_ref') }}
     left join loinc         l_loinc on l_loinc.concept_code = l.loinc_code
-    left join test_seed     l_seed  on l_seed.source_code  = l.source_code
+    left join test_seed     l_seed
+      on l_seed.source_code = l.source_code
+     and lower(l_seed.source_code_system) = lower(l.source_code_system)
     left join ucum          u_ucum  on lower(u_ucum.concept_code) = lower(l.unit_ucum_code)
     left join unit_seed     u_seed  on lower(u_seed.source_unit)  = lower(l.unit_source)
     left join snomed_values v_snomed on v_snomed.concept_code = l.value_codeable_snomed_code
     left join operator      op      on op.comparator = l.comparator_norm
+    left join source_concept src
+      on lower(src.system_uri) = lower(l.source_code_system)
+     and src.concept_code = l.source_code
     left join visit_detail_lookup vdl on vdl.fhir_observation_id = l.fhir_observation_id
     left join vo            on vo.visit_source_value = l.encounter_ref
     left join sp            on sp.specimen_source_id = l.specimen_ref

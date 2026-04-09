@@ -11,10 +11,11 @@ sources:
     database: "{{ target.project }}"
     schema: "{{ var('raw_dataset') }}"
     loader: ingest/ndjson_to_bq.py
-    freshness:
-      warn_after: {count: 26, period: hour}
-      error_after: {count: 48, period: hour}
-    loaded_at_field: _ingest_run_date
+    config:
+      freshness:
+        warn_after: {count: 26, period: hour}
+        error_after: {count: 48, period: hour}
+      loaded_at_field: _ingest_run_date
     tables:
       - name: Patient
       - name: Encounter

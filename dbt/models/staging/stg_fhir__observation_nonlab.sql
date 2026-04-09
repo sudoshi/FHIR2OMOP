@@ -43,11 +43,27 @@ select
       from unnest(json_query_array(raw, '$.code.coding')) c
       limit 1
     )                                                                 as source_code,
+    (
+      select safe.string(c.system)
+      from unnest(json_query_array(raw, '$.code.coding')) c
+      limit 1
+    )                                                                 as source_code_system,
+    (
+      select safe.string(c.display)
+      from unnest(json_query_array(raw, '$.code.coding')) c
+      limit 1
+    )                                                                 as source_code_display,
     {{ json_ts('raw', 'effectiveDateTime') }}                         as effective_datetime,
+    {{ json_ts('raw', 'effectivePeriod.start') }}                     as effective_period_start,
     {{ json_number('raw', 'valueQuantity.value') }}                   as value_number,
     {{ json_string('raw', 'valueQuantity.unit') }}                    as unit_source,
     {{ json_string('raw', 'valueQuantity.code') }}                    as unit_ucum_code,
     {{ json_string('raw', 'valueString') }}                           as value_string,
+    (
+      select safe.string(c.display)
+      from unnest(json_query_array(raw, '$.valueCodeableConcept.coding')) c
+      limit 1
+    )                                                                 as value_codeable_display,
     (
       select safe.string(c.code)
       from unnest(json_query_array(raw, '$.valueCodeableConcept.coding')) c

@@ -16,12 +16,11 @@ Compatible with Composer 2 / Airflow 2.6+.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
-from pathlib import Path
+from datetime import timedelta
 
+import pendulum
 from airflow import DAG
 from airflow.operators.bash import BashOperator
-from airflow.providers.google.cloud.operators.bigquery import BigQueryInsertJobOperator  # noqa: F401
 from airflow.operators.empty import EmptyOperator
 
 # --- config ---------------------------------------------------------------
@@ -32,6 +31,7 @@ GCS_LANDING = "{{ var.value.gcs_landing }}"
 DBT_PROJECT_DIR = "/home/airflow/gcs/dags/fhir2omop/dbt"
 INGEST_DIR = "/home/airflow/gcs/dags/fhir2omop/ingest"
 RUN_DATE = "{{ ds }}"
+LOCAL_TZ = pendulum.timezone("America/Santiago")
 
 default_args = {
     "owner": "chile-omop",
@@ -45,7 +45,7 @@ with DAG(
     dag_id="fhir2omop_nightly",
     description="HAPI FHIR → OMOP CDM on BigQuery",
     default_args=default_args,
-    start_date=datetime(2026, 1, 1),
+    start_date=pendulum.datetime(2026, 1, 1, tz=LOCAL_TZ),
     schedule="15 2 * * *",          # 02:15 local
     catchup=False,
     max_active_runs=1,

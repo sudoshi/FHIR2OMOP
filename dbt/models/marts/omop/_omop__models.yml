@@ -26,8 +26,9 @@ models:
         tests:
           - not_null
           - relationships:
-              to: ref('person')
-              field: person_id
+              arguments:
+                to: ref('person')
+                field: person_id
 
   - name: visit_detail
     columns:
@@ -37,8 +38,9 @@ models:
         tests:
           - not_null
           - relationships:
-              to: ref('person')
-              field: person_id
+              arguments:
+                to: ref('person')
+                field: person_id
 
   - name: specimen
     columns:
@@ -48,8 +50,9 @@ models:
         tests:
           - not_null
           - relationships:
-              to: ref('person')
-              field: person_id
+              arguments:
+                to: ref('person')
+                field: person_id
 
   - name: measurement
     description: OMOP MEASUREMENT — the core of the CDM for LIMS-dominant feeds.
@@ -60,8 +63,9 @@ models:
         tests:
           - not_null
           - relationships:
-              to: ref('person')
-              field: person_id
+              arguments:
+                to: ref('person')
+                field: person_id
       - name: measurement_concept_id
         tests: [not_null]
       - name: measurement_date
@@ -78,5 +82,6 @@ models:
       - name: person_id
         tests:
           - relationships:
-              to: ref('person')
-              field: person_id
+              arguments:
+                to: ref('person')
+                field: person_id

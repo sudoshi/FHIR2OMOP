@@ -11,7 +11,7 @@ with enc as (
 ),
 
 p as (
-    select person_id, person_source_value from {{ ref('person') }}
+    select person_id from {{ ref('person') }}
 ),
 
 visit_type as (
@@ -45,6 +45,6 @@ select
     cast(null as string)                                                     as discharged_to_source_value,
     cast(null as int64)                                                      as preceding_visit_occurrence_id
 from enc
-join p on p.person_source_value = enc.patient_ref
+join p on p.person_id = {{ hash_id('enc.patient_ref') }}
 cross join visit_type vt
 left join visit_concept vc on lower(vc.concept_code) = lower(enc.class_code)

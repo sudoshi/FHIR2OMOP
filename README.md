@@ -45,6 +45,23 @@ dbt seed
 dbt build --select tag:omop
 ```
 
+## First Validation Run
+
+When you are ready to test against a real BigQuery project, use
+`WAREHOUSE_VALIDATION_RUNBOOK.md`. It walks through:
+
+- loading a small raw FHIR batch first
+- validating `fhir_raw` before dbt
+- building dbt in stages
+- checking OMOP row counts and unknown concept rates
+- running dbt tests and DQD in that order
+
+Reusable helper queries live in:
+
+- `dbt/analyses/raw_resource_counts.sql`
+- `dbt/analyses/omop_validation_summary.sql`
+- `dbt/analyses/inventory_source_codes.sql`
+
 ## Pipeline topology
 
 ```
@@ -59,8 +76,9 @@ rationale for each layer.
 ## What this code *does not* do (yet)
 
 - **Sensitive data handling.** You must hash `PERSON.person_source_value`
-  with a project-wide pepper before landing. A stub is in
-  `dbt/macros/hash_mrn.sql` — plug in your KMS key reference.
+  in production. `dbt/macros/hash_mrn.sql` now supports this via
+  `hash_person_source_value: true` plus a
+  `person_source_value_pepper` var; keep it disabled in local/dev.
 - **Mirror to Cloud Healthcare API FHIR store.** Optional Layer 2 from the
   brief. If you go that route you can skip `ingest/ndjson_to_bq.py`
   entirely and point `sources.yml` at the Analytics V2 tables the

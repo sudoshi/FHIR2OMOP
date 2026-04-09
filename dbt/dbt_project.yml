@@ -27,6 +27,10 @@ vars:
   lab_result_type_concept_id: 32856
   # Fallback concept_id for anything we can't resolve.
   unknown_concept_id: 0
+  # Enable in production if PERSON.person_source_value must be hashed before
+  # analysts can access the CDM.
+  hash_person_source_value: false
+  person_source_value_pepper: ""
 
 models:
   fhir2omop:

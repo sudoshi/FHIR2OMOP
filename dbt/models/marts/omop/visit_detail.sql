@@ -12,7 +12,7 @@ with dr as (
 ),
 
 p as (
-    select person_id, person_source_value from {{ ref('person') }}
+    select person_id from {{ ref('person') }}
 ),
 
 vo as (
@@ -40,5 +40,5 @@ select
     cast(null as int64)                                                       as parent_visit_detail_id,
     vo.visit_occurrence_id                                                    as visit_occurrence_id
 from dr
-join p on p.person_source_value = dr.patient_ref
+join p on p.person_id = {{ hash_id('dr.patient_ref') }}
 left join vo on vo.visit_source_value = dr.encounter_ref
