@@ -11,7 +11,7 @@
 GCP_REGION ?= southamerica-west1
 GCS_LANDING ?= gs://$(GCP_PROJECT)-fhir-landing
 
-.PHONY: check datasets buckets vocab ingest load dbt-parse dbt-build dbt-test dqd all clean-raw runbook runbook-dry-run runbook-resume runbook-install
+.PHONY: check datasets buckets vocab ingest load dbt-parse dbt-build dbt-test dqd all clean-raw runbook runbook-dry-run runbook-resume runbook-install runbook-clean
 
 check:
 	@test -n "$(GCP_PROJECT)" || (echo "ERROR: GCP_PROJECT not set" && exit 1)
@@ -66,17 +66,37 @@ clean-raw: check
 
 # -----------------------------------------------------------------------------
 # Interactive warehouse-validation runbook (TUI)
-# See WAREHOUSE_VALIDATION_RUNBOOK.md and tools/runbook/
+# See docs/WAREHOUSE_VALIDATION_RUNBOOK.md and tools/runbook/
+#
+# We ship a dedicated venv at tools/runbook/.venv so the TUI's three deps
+# (rich, questionary, python-dotenv) don't collide with system Python.
+# Ubuntu 24.04 / PEP 668 forbids `pip install` against system Python
+# without --break-system-packages, so a venv is the right call anyway.
 # -----------------------------------------------------------------------------
 
+RUNBOOK_VENV := tools/runbook/.venv
+RUNBOOK_PY   := $(RUNBOOK_VENV)/bin/python
+
 runbook-install:
-	pip install -r tools/runbook/requirements.txt
+	python3 -m venv $(RUNBOOK_VENV)
+	$(RUNBOOK_PY) -m pip install --upgrade pip
+	$(RUNBOOK_PY) -m pip install -r tools/runbook/requirements.txt
+	@echo ""
+	@echo "runbook TUI installed into $(RUNBOOK_VENV)"
+	@echo "Next: make runbook-dry-run   (preview)"
+	@echo "      make runbook           (real interactive run)"
 
 runbook:
-	python -m tools.runbook
+	@test -x $(RUNBOOK_PY) || (echo "runbook venv missing — run 'make runbook-install' first" && exit 1)
+	$(RUNBOOK_PY) -m tools.runbook
 
 runbook-dry-run:
-	python -m tools.runbook --dry-run
+	@test -x $(RUNBOOK_PY) || (echo "runbook venv missing — run 'make runbook-install' first" && exit 1)
+	$(RUNBOOK_PY) -m tools.runbook --dry-run
 
 runbook-resume:
-	python -m tools.runbook --resume
+	@test -x $(RUNBOOK_PY) || (echo "runbook venv missing — run 'make runbook-install' first" && exit 1)
+	$(RUNBOOK_PY) -m tools.runbook --resume
+
+runbook-clean:
+	rm -rf $(RUNBOOK_VENV)

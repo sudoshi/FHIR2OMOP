@@ -49,12 +49,18 @@ Install the TUI's Python dependencies:
 
 ```bash
 make runbook-install
-# or:
-pip install -r tools/runbook/requirements.txt
 ```
 
-Dependencies are deliberately minimal: `rich`, `questionary`,
-`python-dotenv`.
+This creates a dedicated venv at `tools/runbook/.venv/` and installs
+`rich`, `questionary`, and `python-dotenv` into it. A venv is used
+(instead of installing into system Python) because Ubuntu 24.04 and
+other modern distros enforce PEP 668 — bare `pip install` against
+system Python is refused.
+
+All `make runbook*` targets invoke `tools/runbook/.venv/bin/python`
+directly, so the TUI does not depend on `python`/`python3` being on
+your `$PATH` in any particular state. To tear the venv down and
+reinstall, run `make runbook-clean && make runbook-install`.
 
 ---
 
