@@ -35,7 +35,7 @@ select
     {{ json_string('raw', 'gender') }}                               as gender,
     {{ json_date('raw', 'birthDate') }}                              as birth_date,
     {{ json_ts('raw', 'deceasedDateTime') }}                         as deceased_datetime,
-    safe_cast({{ json_string('raw', 'deceasedBoolean') }} as bool)   as deceased_bool,
+    {{ json_bool('raw', 'deceasedBoolean') }}                        as deceased_bool,
     -- First identifier (MRN-ish). You may need to filter by system in real data.
     (
       select safe.string(i.value)

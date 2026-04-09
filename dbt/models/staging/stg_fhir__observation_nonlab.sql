@@ -23,12 +23,10 @@ with_category as (
         resource_id,
         raw,
         last_updated,
-        exists(
-          select 1
-          from unnest(json_query_array(raw, '$.category')) cat,
-               unnest(json_query_array(cat, '$.coding')) c
-          where lower(safe.string(c.code)) in ('laboratory', 'lab')
-        ) as is_lab
+        -- Shared macro with stg_fhir__observation_lab so the lab /
+        -- non-lab split stays consistent. See the macro for the full
+        -- list of category variants matched.
+        {{ is_observation_lab('raw') }} as is_lab
     from latest
 )
 

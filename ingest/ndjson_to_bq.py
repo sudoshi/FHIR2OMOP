@@ -131,6 +131,41 @@ def rewrite_ndjson(src_blob: storage.Blob, dst_blob: storage.Blob,
     return n
 
 
+def delete_existing_run(bq: bigquery.Client, project: str, dataset: str,
+                        resource_type: str, run_date: str,
+                        location: str) -> int:
+    """
+    Delete any rows already loaded for (resource_type, run_date) so
+    that re-running ndjson_to_bq.py for the same --run-date is
+    idempotent.
+
+    Why this exists
+    ---------------
+    load_file() uses WRITE_APPEND (see below) because a single resource
+    type typically lands across many NDJSON files and each is loaded in
+    its own job. Without this guard, rerunning the same --run-date
+    would double every row in fhir_raw.<Resource> — dbt staging dedupes
+    by (resource_id, last_updated) so the marts layer papers over it,
+    but the raw layer duplication is real and breaks row-count audits.
+
+    The tables are partitioned on _ingest_run_date so this DELETE
+    touches exactly one partition. On a first-ever run the partition
+    is empty and the DELETE is a cheap no-op.
+    """
+    table_id = f"{project}.{dataset}.{resource_type}"
+    query = f"DELETE FROM `{table_id}` WHERE _ingest_run_date = @run_date"
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("run_date", "DATE", run_date),
+        ],
+    )
+    LOG.info("clearing existing rows %s where _ingest_run_date=%s",
+             table_id, run_date)
+    job = bq.query(query, job_config=job_config, location=location)
+    job.result()
+    return job.num_dml_affected_rows or 0
+
+
 def load_file(bq: bigquery.Client, project: str, dataset: str,
               resource_type: str, uri: str, location: str) -> int:
     table_id = f"{project}.{dataset}.{resource_type}"
@@ -163,6 +198,11 @@ def main() -> int:
 
     total_rows = 0
     seen_types: set[str] = set()
+    # Per-run idempotency: clear the target partition for each resource
+    # type the first time we see it this run, then WRITE_APPEND all
+    # subsequent files for that type. See delete_existing_run() for the
+    # full rationale.
+    cleared: set[str] = set()
     for blob in bucket.list_blobs(prefix=day_prefix + "/"):
         if not blob.name.endswith(".ndjson"):
             continue
@@ -171,6 +211,13 @@ def main() -> int:
         resource_type = stem.split("-", 1)[0]
         seen_types.add(resource_type)
         ensure_table(bq, args.project, args.dataset, resource_type)
+
+        if resource_type not in cleared:
+            delete_existing_run(
+                bq, args.project, args.dataset, resource_type,
+                args.run_date, args.location,
+            )
+            cleared.add(resource_type)
 
         staged_name = f"{staged_prefix}/{stem}"
         staged_blob = bucket.blob(staged_name)

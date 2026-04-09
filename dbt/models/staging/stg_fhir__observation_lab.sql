@@ -30,14 +30,11 @@ with_category as (
         resource_id,
         raw,
         last_updated,
-        -- A category of "laboratory" is the standard filter; some feeds
-        -- put it under a non-standard code so we also accept "lab".
-        exists(
-          select 1
-          from unnest(json_query_array(raw, '$.category')) cat,
-               unnest(json_query_array(cat, '$.coding')) c
-          where lower(safe.string(c.code)) in ('laboratory', 'lab')
-        ) as is_lab
+        -- See dbt/macros/is_observation_lab.sql for the full list of
+        -- variants matched (coding.code / coding.display / text, all
+        -- case-insensitive). Both observation_lab and observation_nonlab
+        -- must use the same macro or the split drifts.
+        {{ is_observation_lab('raw') }} as is_lab
     from latest
 )
 
@@ -91,14 +88,17 @@ select
     )                                                                 as value_codeable_display,
     {{ json_string('raw', 'valueString') }}                           as value_string,
 
-    -- reference range — take the first entry; see brief §4 "Common traps"
+    -- reference range — take the first entry; see brief §4 "Common traps".
+    -- rr.low.value / rr.high.value are JSON numbers, so we need LAX_FLOAT64
+    -- (not safe.string, which returns NULL on non-string JSON scalars —
+    -- see dbt/macros/json_lax.sql for the full rationale).
     (
-      select safe_cast(safe.string(rr.low.value) as numeric)
+      select safe_cast(lax_float64(rr.low.value) as numeric)
       from unnest(json_query_array(raw, '$.referenceRange')) rr
       limit 1
     )                                                                 as range_low,
     (
-      select safe_cast(safe.string(rr.high.value) as numeric)
+      select safe_cast(lax_float64(rr.high.value) as numeric)
       from unnest(json_query_array(raw, '$.referenceRange')) rr
       limit 1
     )                                                                 as range_high,
