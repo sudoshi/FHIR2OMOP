@@ -1,0 +1,8 @@
+source_code,source_code_system,target_concept_id,source_concept_id,target_description
+ROCHE_GLUC_FST,urn:roche:cobas,3004501,0,Glucose [Mass/volume] in Serum or Plasma — fasting (LOINC 1558-6 standard)
+ROCHE_HGB,urn:roche:cobas,3000963,0,Hemoglobin [Mass/volume] in Blood (LOINC 718-7 standard)
+ROCHE_CREA,urn:roche:cobas,3016723,0,Creatinine [Mass/volume] in Serum or Plasma (LOINC 2160-0 standard)
+ROCHE_A1C,urn:roche:cobas,3004410,0,Hemoglobin A1c/Hemoglobin.total in Blood (LOINC 4548-4 standard)
+ROCHE_K,urn:roche:cobas,3023103,0,Potassium [Moles/volume] in Serum or Plasma (LOINC 2823-3 standard)
+ROCHE_NA,urn:roche:cobas,3019550,0,Sodium [Moles/volume] in Serum or Plasma (LOINC 2951-2 standard)
+ROCHE_CL,urn:roche:cobas,3014576,0,Chloride [Moles/volume] in Serum or Plasma (LOINC 2075-0 standard)

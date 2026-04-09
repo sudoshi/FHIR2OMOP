@@ -1,0 +1,36 @@
+version: 2
+
+sources:
+  - name: fhir_raw
+    description: >
+      Raw FHIR resources, one table per resource type. By default the
+      loader in `ingest/ndjson_to_bq.py` writes a single JSON column
+      ("raw") plus bookkeeping. If you switch to the Cloud Healthcare
+      API Analytics V2 streaming path, add a second source (below) and
+      swap the stg_* models over.
+    database: "{{ target.project }}"
+    schema: "{{ var('raw_dataset') }}"
+    loader: ingest/ndjson_to_bq.py
+    freshness:
+      warn_after: {count: 26, period: hour}
+      error_after: {count: 48, period: hour}
+    loaded_at_field: _ingest_run_date
+    tables:
+      - name: Patient
+      - name: Encounter
+      - name: Observation
+      - name: DiagnosticReport
+      - name: Specimen
+      - name: Practitioner
+      - name: Organization
+      - name: Location
+
+  - name: omop_vocab
+    description: OMOP vocabulary loaded from OHDSI Athena.
+    database: "{{ target.project }}"
+    schema: "{{ var('vocab_dataset') }}"
+    tables:
+      - name: concept
+      - name: concept_relationship
+      - name: concept_ancestor
+      - name: vocabulary

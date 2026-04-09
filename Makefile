@@ -1,0 +1,62 @@
+# FHIR2OMOP — convenience targets
+#
+# Required env vars:
+#   GCP_PROJECT   e.g. chile-omop-prod
+#   GCP_REGION    e.g. southamerica-west1
+#
+# Optional:
+#   HAPI_BASE_URL   e.g. https://hapi.internal/fhir
+#   GCS_LANDING     e.g. gs://chile-omop-prod-fhir-landing
+
+GCP_REGION ?= southamerica-west1
+GCS_LANDING ?= gs://$(GCP_PROJECT)-fhir-landing
+
+.PHONY: check datasets buckets vocab ingest load dbt-build dbt-test dqd all clean-raw
+
+check:
+	@test -n "$(GCP_PROJECT)" || (echo "ERROR: GCP_PROJECT not set" && exit 1)
+	@echo "project=$(GCP_PROJECT) region=$(GCP_REGION)"
+
+datasets: check
+	bash infra/bigquery/create_datasets.sh $(GCP_PROJECT) $(GCP_REGION)
+
+buckets: check
+	gsutil mb -p $(GCP_PROJECT) -l $(GCP_REGION) -b on $(GCS_LANDING) || true
+
+vocab: check
+	@test -f ./vocabulary_download_v5.zip || (echo "Download vocab from https://athena.ohdsi.org/ to ./vocabulary_download_v5.zip first" && exit 1)
+	python vocab/load_athena_vocab.py \
+	  --zip ./vocabulary_download_v5.zip \
+	  --project $(GCP_PROJECT) \
+	  --dataset omop_vocab \
+	  --location $(GCP_REGION)
+
+ingest: check
+	python ingest/hapi_export.py \
+	  --hapi-base-url $(HAPI_BASE_URL) \
+	  --gcs-landing $(GCS_LANDING) \
+	  --run-date $$(date +%Y-%m-%d)
+
+load: check
+	python ingest/ndjson_to_bq.py \
+	  --project $(GCP_PROJECT) \
+	  --dataset fhir_raw \
+	  --location $(GCP_REGION) \
+	  --gcs-landing $(GCS_LANDING) \
+	  --run-date $$(date +%Y-%m-%d)
+
+dbt-build:
+	cd dbt && dbt deps && dbt seed && dbt build --select tag:omop
+
+dbt-test:
+	cd dbt && dbt test
+
+dqd: check
+	Rscript quality/run_dqd.R $(GCP_PROJECT) omop_cdm omop_vocab
+
+all: datasets buckets vocab ingest load dbt-build dbt-test
+
+clean-raw: check
+	@echo "This will DROP $(GCP_PROJECT):fhir_raw — Ctrl+C to abort"
+	@sleep 5
+	bq rm -r -f -d $(GCP_PROJECT):fhir_raw

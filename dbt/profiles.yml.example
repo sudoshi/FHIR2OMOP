@@ -1,0 +1,32 @@
+# Copy to ~/.dbt/profiles.yml (or set DBT_PROFILES_DIR) and edit values.
+#
+# Two targets are provided:
+#   - dev: uses OAuth (gcloud auth application-default login)
+#   - prod: uses a service account key file (for CI/Composer)
+
+fhir2omop:
+  target: dev
+  outputs:
+    dev:
+      type: bigquery
+      method: oauth
+      project: chile-omop-dev
+      dataset: omop_cdm           # default; individual models override
+      location: southamerica-west1
+      threads: 8
+      priority: interactive
+      timeout_seconds: 600
+      maximum_bytes_billed: 100000000000  # 100 GB cap per query
+      retries: 2
+
+    prod:
+      type: bigquery
+      method: service-account
+      keyfile: /secrets/dbt-bigquery-sa.json
+      project: chile-omop-prod
+      dataset: omop_cdm
+      location: southamerica-west1
+      threads: 16
+      priority: batch
+      timeout_seconds: 1800
+      retries: 2

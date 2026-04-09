@@ -1,0 +1,50 @@
+name: fhir2omop
+version: '1.0.0'
+config-version: 2
+
+profile: fhir2omop
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+snapshot-paths: ["snapshots"]
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+vars:
+  # Override in profiles.yml or on the command line (--vars).
+  raw_dataset: fhir_raw
+  stg_dataset: omop_stg
+  omop_dataset: omop_cdm
+  vocab_dataset: omop_vocab
+  # Type concept used on every MEASUREMENT row. This is an OMOP Type Concept
+  # representing "Lab result". Confirm in your vocabulary against
+  # omop_vocab.concept where vocabulary_id='Type Concept'.
+  lab_result_type_concept_id: 32856
+  # Fallback concept_id for anything we can't resolve.
+  unknown_concept_id: 0
+
+models:
+  fhir2omop:
+    staging:
+      +materialized: view
+      +schema: "{{ var('stg_dataset') }}"
+      +tags: ["staging"]
+    intermediate:
+      +materialized: view
+      +schema: "{{ var('stg_dataset') }}"
+      +tags: ["intermediate"]
+    marts:
+      omop:
+        +materialized: table
+        +schema: "{{ var('omop_dataset') }}"
+        +tags: ["omop"]
+
+seeds:
+  fhir2omop:
+    +schema: "{{ var('stg_dataset') }}"
+    +quote_columns: false

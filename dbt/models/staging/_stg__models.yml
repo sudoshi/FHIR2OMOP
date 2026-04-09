@@ -1,0 +1,35 @@
+version: 2
+
+models:
+  - name: stg_fhir__patient
+    description: Flattened FHIR Patient (latest version per id).
+    columns:
+      - name: fhir_patient_id
+        tests: [unique, not_null]
+
+  - name: stg_fhir__encounter
+    columns:
+      - name: fhir_encounter_id
+        tests: [unique, not_null]
+
+  - name: stg_fhir__specimen
+    columns:
+      - name: fhir_specimen_id
+        tests: [unique, not_null]
+
+  - name: stg_fhir__diagnostic_report
+    columns:
+      - name: fhir_report_id
+        tests: [unique, not_null]
+
+  - name: stg_fhir__observation_lab
+    description: FHIR Observations where category = laboratory.
+    columns:
+      - name: fhir_observation_id
+        tests: [unique, not_null]
+
+  - name: stg_fhir__observation_nonlab
+    description: FHIR Observations where category != laboratory.
+    columns:
+      - name: fhir_observation_id
+        tests: [unique, not_null]

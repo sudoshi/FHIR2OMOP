@@ -1,0 +1,82 @@
+version: 2
+
+models:
+  - name: person
+    description: OMOP PERSON — one row per FHIR Patient.
+    columns:
+      - name: person_id
+        tests:
+          - unique
+          - not_null
+      - name: gender_concept_id
+        tests: [not_null]
+      - name: year_of_birth
+        tests: [not_null]
+
+  - name: location
+    columns:
+      - name: location_id
+        tests: [unique, not_null]
+
+  - name: visit_occurrence
+    columns:
+      - name: visit_occurrence_id
+        tests: [unique, not_null]
+      - name: person_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('person')
+              field: person_id
+
+  - name: visit_detail
+    columns:
+      - name: visit_detail_id
+        tests: [unique, not_null]
+      - name: person_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('person')
+              field: person_id
+
+  - name: specimen
+    columns:
+      - name: specimen_id
+        tests: [unique, not_null]
+      - name: person_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('person')
+              field: person_id
+
+  - name: measurement
+    description: OMOP MEASUREMENT — the core of the CDM for LIMS-dominant feeds.
+    columns:
+      - name: measurement_id
+        tests: [unique, not_null]
+      - name: person_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('person')
+              field: person_id
+      - name: measurement_concept_id
+        tests: [not_null]
+      - name: measurement_date
+        tests: [not_null]
+      - name: measurement_type_concept_id
+        tests: [not_null]
+      - name: value_as_number
+        description: NULL for categorical results (see value_as_concept_id).
+
+  - name: observation
+    columns:
+      - name: observation_id
+        tests: [unique, not_null]
+      - name: person_id
+        tests:
+          - relationships:
+              to: ref('person')
+              field: person_id

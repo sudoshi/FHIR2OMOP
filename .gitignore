@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# dbt
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+dbt/.user.yml
+profiles.yml
+
+# Credentials / secrets
+*.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials*.json
+service-account*.json
+gcp-key*.json
+
+# Vocabulary bundles (large)
+vocabulary_download_*.zip
+vocab/bundle/
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Local Claude settings
+.claude/settings.local.json

@@ -1,0 +1,27 @@
+version: 2
+
+seeds:
+  - name: seed_unit_source_to_concept
+    description: >
+      Source unit string (as emitted by the LIMS) → OMOP unit concept_id.
+      This is the hand-maintained tail of the UCUM catalog: Roche instruments
+      often emit lowercase or locally-flavored unit strings that don't
+      resolve through int_ucum_lookup. Add a row every time Data Quality
+      flags an unknown unit.
+    columns:
+      - name: source_unit
+        tests: [unique, not_null]
+      - name: target_concept_id
+        tests: [not_null]
+
+  - name: seed_test_source_to_concept
+    description: >
+      LIMS test code → OMOP measurement concept_id. Covers the 20% of
+      Roche-proprietary test codes that don't appear in LOINC. Keep
+      source_code unique; if your LIMS uses multiple code systems put
+      them on separate rows.
+    columns:
+      - name: source_code
+        tests: [unique, not_null]
+      - name: target_concept_id
+        tests: [not_null]

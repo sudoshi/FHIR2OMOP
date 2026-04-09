@@ -1,0 +1,26 @@
+source_unit,target_concept_id,notes
+mg/dl,8840,Roche often emits lowercase; UCUM is 'mg/dL'
+mg/dL,8840,canonical UCUM
+g/dl,8713,lowercase variant
+g/dL,8713,canonical UCUM
+mmol/l,8753,lowercase variant
+mmol/L,8753,canonical UCUM
+umol/l,9028,lowercase variant; canonical is umol/L
+µmol/L,9028,micro sign variant
+U/l,8763,lowercase variant
+U/L,8763,canonical
+IU/l,8985,lowercase variant
+IU/L,8985,canonical
+x10^9/L,8848,Roche hematology cell-count format
+x10^3/uL,8848,same order of magnitude; confirm in your feed
+10^9/L,8848,alternate notation
+10*9/L,8848,UCUM spelling
+/uL,8784,per-microliter
+%,8554,percent — common reference-range expression
+ng/ml,8842,lowercase variant
+ng/mL,8842,canonical
+mEq/L,9557,milliequivalent per litre
+mmHg,8876,blood-pressure unit
+s,8555,seconds
+ratio,9117,dimensionless ratio
+titer,8623,serology titre
