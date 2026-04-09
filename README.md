@@ -11,6 +11,7 @@ Audience: the Chile team (Roche LIMS → HAPI FHIR → OMOP on BigQuery).
 
 | Component | What it does | Where |
 |---|---|---|
+| Runbook TUI | Interactive wizard that drives the first warehouse-validation run end-to-end (11 stages, pre-flight connectivity checks, resume support) | `tools/runbook/` · [docs](docs/RUNBOOK_TUI.md) |
 | BigQuery bootstrap | Creates `fhir_raw`, `omop_stg`, `omop_cdm`, `omop_vocab` datasets in `southamerica-west1` | `infra/bigquery/` |
 | Vocabulary loader | Loads an Athena vocabulary bundle into `omop_vocab` | `vocab/` |
 | HAPI ingestion | Triggers HAPI `$export`, polls, lands NDJSON in GCS | `ingest/hapi_export.py` |
@@ -19,16 +20,47 @@ Audience: the Chile team (Roche LIMS → HAPI FHIR → OMOP on BigQuery).
 | Airflow DAG | Nightly orchestration of the whole chain | `orchestration/airflow/dags/fhir2omop_nightly.py` |
 | DQD runner | Skeleton for running OHDSI DataQualityDashboard against BigQuery | `quality/` |
 
-## Quickstart (first-time setup)
+## Quickstart
+
+The recommended path is the interactive TUI at `tools/runbook/`. It wraps
+every step of `docs/WAREHOUSE_VALIDATION_RUNBOOK.md`, collects every input
+with sensible defaults, runs pre-flight connectivity checks against GCP
+and HAPI before touching anything, and persists state so you can resume
+after a failure.
 
 ```bash
 # 0. Prereqs: gcloud SDK, python 3.11+, dbt-bigquery, bq CLI, a GCP project.
-#    See docs/PREREQUISITES.md for macOS/Linux/Windows details.
+#    See docs/PREREQUISITES.md for macOS/Linux/Windows install instructions.
+
+# 1. One-time install (creates tools/runbook/.venv with rich + questionary)
+make runbook-install
+
+# 2. Preview what the wizard will ask and what will run — no side effects
+make runbook-dry-run
+
+# 3. Verify gcloud, bq, HAPI, dbt, and the vocab zip are actually reachable
+make runbook-check-connectivity
+
+# 4. Run the interactive wizard end-to-end
+make runbook
+```
+
+If a stage fails, fix the issue and `make runbook-resume` to pick up from
+where it stopped. Full operator docs: [`docs/RUNBOOK_TUI.md`](docs/RUNBOOK_TUI.md).
+
+### Manual path (if you prefer running the stages yourself)
+
+The same work can be done step-by-step against the Make targets. Use this
+if you're scripting in CI or want to understand what the TUI is actually
+doing under the hood.
+
+```bash
 export GCP_PROJECT=chile-omop-prod
 export GCP_REGION=southamerica-west1
 
-# 1. Create datasets
+# 1. Create datasets + landing bucket
 make datasets
+make buckets
 
 # 2. Load OMOP vocabulary (after downloading from https://athena.ohdsi.org/)
 #    Choose at least: SNOMED, LOINC, UCUM, Gender, Race, Ethnicity, Visit,
@@ -38,7 +70,7 @@ python vocab/load_athena_vocab.py \
   --project $GCP_PROJECT \
   --dataset omop_vocab
 
-# 3. Install dbt deps and run once (after raw FHIR data is loaded)
+# 3. Install dbt deps, seed, and build (after raw FHIR data is loaded)
 cd dbt
 cp profiles.yml.example ~/.dbt/profiles.yml    # edit paths
 dbt deps
@@ -46,10 +78,11 @@ dbt seed
 dbt build --select tag:omop
 ```
 
-## First Validation Run
+## First validation run
 
-When you are ready to test against a real BigQuery project, use
-`WAREHOUSE_VALIDATION_RUNBOOK.md`. It walks through:
+The source of truth for the first real warehouse-backed run is
+[`docs/WAREHOUSE_VALIDATION_RUNBOOK.md`](docs/WAREHOUSE_VALIDATION_RUNBOOK.md).
+It walks through:
 
 - loading a small raw FHIR batch first
 - validating `fhir_raw` before dbt
@@ -57,7 +90,10 @@ When you are ready to test against a real BigQuery project, use
 - checking OMOP row counts and unknown concept rates
 - running dbt tests and DQD in that order
 
-Reusable helper queries live in:
+The runbook TUI (`make runbook`) drives that document as 11 interactive
+stages, runs the validation queries from §4 and §7 automatically, and
+produces an exit-criteria report against §10. Reusable helper queries
+live in:
 
 - `dbt/analyses/raw_resource_counts.sql`
 - `dbt/analyses/omop_validation_summary.sql`
